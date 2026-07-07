@@ -1,6 +1,9 @@
+from pathlib import Path
+
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QMainWindow,
@@ -12,11 +15,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.csv_import import import_payers_csv
 from app.db import delete_payer, get_connection, get_recipient_profile, list_payers
 from app.models import build_slip, payer_from_row, recipient_from_row
 from app.ui.payer_dialog import PayerDialog
 from app.ui.recipient_dialog import RecipientDialog
 from app.ui.slip_preview_dialog import SlipPreviewDialog
+
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
 
 COLUMNS = [
     "ID", "Name", "Address", "Postcode & city", "Amount (EUR)",
@@ -68,12 +74,15 @@ class MainWindow(QMainWindow):
         edit_btn.clicked.connect(self._on_edit_payer)
         delete_btn = QPushButton("Delete payer")
         delete_btn.clicked.connect(self._on_delete_payer)
+        import_btn = QPushButton("Import CSV...")
+        import_btn.clicked.connect(self._on_import_csv)
         generate_btn = QPushButton("Generate slip")
         generate_btn.clicked.connect(self._on_generate_slip)
 
         button_row.addWidget(add_btn)
         button_row.addWidget(edit_btn)
         button_row.addWidget(delete_btn)
+        button_row.addWidget(import_btn)
         button_row.addStretch(1)
         button_row.addWidget(generate_btn)
         layout.addLayout(button_row)
@@ -130,6 +139,24 @@ class MainWindow(QMainWindow):
         if confirm == QMessageBox.Yes:
             delete_payer(self.conn, payer_id)
             self._refresh_table()
+
+    def _on_import_csv(self) -> None:
+        start_dir = str(TEMPLATES_DIR) if TEMPLATES_DIR.exists() else ""
+        path, _ = QFileDialog.getOpenFileName(self, "Import payers from CSV", start_dir, "CSV files (*.csv)")
+        if not path:
+            return
+
+        result = import_payers_csv(self.conn, Path(path))
+        self._refresh_table()
+
+        message = f"Imported {result.imported} payer(s)."
+        if result.errors:
+            shown_errors = "\n".join(result.errors[:10])
+            more = f"\n...and {len(result.errors) - 10} more" if len(result.errors) > 10 else ""
+            message += f"\n\n{len(result.errors)} row(s) skipped:\n{shown_errors}{more}"
+            QMessageBox.warning(self, "Import finished with errors", message)
+        else:
+            QMessageBox.information(self, "Import complete", message)
 
     def _on_generate_slip(self) -> None:
         payer_id = self._selected_payer_id()

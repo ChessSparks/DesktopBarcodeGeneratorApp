@@ -20,18 +20,20 @@ FONT_PATH = "C:/Windows/Fonts/arial.ttf"
 
 DEFAULT_FONT_SIZE = 32
 SMALL_FONT_SIZE = 20
+FIELD_PADDING = 8
+MIN_FONT_RATIO = 0.45
 
 # left/top/width/height are pixel coordinates measured against REFERENCE_SIZE.
 FIELD_LAYOUT = {
-    "payer_name": dict(left=60, top=110, width=520, height=65),
-    "payer_address": dict(left=60, top=180, width=520, height=65),
-    "payer_place": dict(left=60, top=250, width=520, height=65),
+    "payer_name": dict(left=60, top=98, width=520, height=67),
+    "payer_address": dict(left=60, top=165, width=520, height=67),
+    "payer_place": dict(left=60, top=232, width=520, height=63),
     "currency": dict(left=900, top=70, width=130, height=55),
     "amount": dict(left=1160, top=70, width=700, height=55, align="right", letter_spacing=8),
     "iban": dict(left=850, top=310, width=1000, height=56, letter_spacing=21),
-    "recipient_name": dict(left=60, top=355, width=520, height=100),
-    "recipient_address": dict(left=60, top=461, width=520, height=100),
-    "recipient_place": dict(left=60, top=567, width=520, height=90),
+    "recipient_name": dict(left=60, top=418, width=520, height=83),
+    "recipient_address": dict(left=60, top=501, width=520, height=83),
+    "recipient_place": dict(left=60, top=584, width=520, height=78),
     "model": dict(left=610, top=405, width=170, height=58, letter_spacing=18),
     "reference": dict(left=850, top=405, width=1010, height=58),
     "purpose_code": dict(left=580, top=515, width=200, height=55),
@@ -71,27 +73,54 @@ def _text_width_with_spacing(draw: ImageDraw.ImageDraw, text: str, font, spacing
     return total - spacing if text else 0.0
 
 
+def _fit_text(
+    draw: ImageDraw.ImageDraw, text: str, base_font_size: int, base_spacing: float, max_width: float
+) -> tuple[ImageFont.FreeTypeFont, float, str]:
+    """Shrinks font size (and spacing proportionally) until text fits max_width.
+
+    Falls back to truncating with an ellipsis if even the smallest font is too wide.
+    """
+    min_size = max(8, round(base_font_size * MIN_FONT_RATIO))
+    size = base_font_size
+    while size >= min_size:
+        font = ImageFont.truetype(FONT_PATH, size)
+        spacing = base_spacing * (size / base_font_size)
+        if _text_width_with_spacing(draw, text, font, spacing) <= max_width:
+            return font, spacing, text
+        size -= 1
+
+    font = ImageFont.truetype(FONT_PATH, min_size)
+    spacing = base_spacing * (min_size / base_font_size)
+    truncated = text
+    while truncated and _text_width_with_spacing(draw, truncated + "…", font, spacing) > max_width:
+        truncated = truncated[:-1]
+    return font, spacing, (truncated + "…") if truncated != text else text
+
+
 def _draw_field(draw: ImageDraw.ImageDraw, key: str, text: str, scale_x: float, scale_y: float):
     if not text:
         return
     field = FIELD_LAYOUT[key]
     left, top, width, height = _resolve_box(field, scale_x, scale_y)
     avg_scale = (scale_x + scale_y) / 2
-    font_size = round(field.get("font_size", DEFAULT_FONT_SIZE) * avg_scale)
-    font = ImageFont.truetype(FONT_PATH, font_size)
-    spacing = field.get("letter_spacing", 0) * avg_scale
+    base_font_size = round(field.get("font_size", DEFAULT_FONT_SIZE) * avg_scale)
+    base_spacing = field.get("letter_spacing", 0) * avg_scale
+    padding = FIELD_PADDING * avg_scale
+    max_width = max(width - 2 * padding, 10)
+
+    font, spacing, fit_text = _fit_text(draw, text, base_font_size, base_spacing, max_width)
 
     bbox = draw.textbbox((0, 0), "Ag", font=font)
     text_height = bbox[3] - bbox[1]
     y = top + (height - text_height) / 2
 
     if field.get("align") == "right":
-        text_width = _text_width_with_spacing(draw, text, font, spacing)
-        x = left + width - text_width
+        text_width = _text_width_with_spacing(draw, fit_text, font, spacing)
+        x = left + width - padding - text_width
     else:
-        x = left
+        x = left + padding
 
-    _draw_text_with_spacing(draw, x, y, text, font, spacing, fill=(0, 0, 0))
+    _draw_text_with_spacing(draw, x, y, fit_text, font, spacing, fill=(0, 0, 0))
 
 
 def render_filled_slip(slip: PaymentSlip, template_path: Path = TEMPLATE_PATH) -> Image.Image:
